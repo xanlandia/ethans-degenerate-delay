@@ -1,0 +1,115 @@
+name: Build VST3
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-mac:
+    name: macOS (VST3 + AU)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install CMake
+        run: brew install cmake
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p artifacts/mac
+          find build -name "*.vst3" -type d | xargs -I{} cp -r {} artifacts/mac/
+          find build -name "*.component" -type d | xargs -I{} cp -r {} artifacts/mac/ || true
+          ls -la artifacts/mac/
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: EthansDegenDelay-macOS
+          path: artifacts/mac/
+          retention-days: 30
+
+  build-windows:
+    name: Windows (VST3)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Collect artifacts
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts/windows
+          Get-ChildItem -Path build -Recurse -Filter "*.vst3" | ForEach-Object {
+            Copy-Item -Path $_.FullName -Destination artifacts/windows/ -Recurse -Force
+          }
+          Get-ChildItem artifacts/windows/
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: EthansDegenDelay-Windows
+          path: artifacts/windows/
+          retention-days: 30
+
+  release:
+    name: Publish Release
+    needs: [build-mac, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download macOS build
+        uses: actions/download-artifact@v4
+        with:
+          name: EthansDegenDelay-macOS
+          path: release/mac/
+
+      - name: Download Windows build
+        uses: actions/download-artifact@v4
+        with:
+          name: EthansDegenDelay-Windows
+          path: release/windows/
+
+      - name: Zip artifacts
+        run: |
+          cd release/mac && zip -r ../../EthansDegenDelay-macOS.zip . && cd ../..
+          cd release/windows && zip -r ../../EthansDegenDelay-Windows.zip . && cd ../..
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: "Ethan's Degenerate Delay v1.0.${{ github.run_number }}"
+          body: |
+            ## Ethan's Degenerate Delay
+
+            A bitcrushing delay VST3 — each echo tap progressively loses bit depth.
+
+            ### Install
+            - **macOS**: Download `EthansDegenDelay-macOS.zip`, unzip, copy the `.vst3` to `~/Library/Audio/Plug-Ins/VST3/` and the `.component` to `~/Library/Audio/Plug-Ins/Components/`
+            - **Windows**: Download `EthansDegenDelay-Windows.zip`, unzip, copy the `.vst3` folder to `C:\Program Files\Common Files\VST3\`
+
+            Restart your DAW and scan for new plugins.
+          files: |
+            EthansDegenDelay-macOS.zip
+            EthansDegenDelay-Windows.zip
+          draft: false
+          prerelease: false
